@@ -44,7 +44,7 @@ for category, search_terms in search_data.items():
             "print_urls": False,
             "format": "jpg",
             "output_directory": output_dir,
-            "image_directory": category,
+            "image_directory": f"output/{category}",
             "chromedriver": "chromedriver-mac-arm64/chromedriver",
             "safe_search": True
         }

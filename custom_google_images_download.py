@@ -15,6 +15,37 @@ class CustomGoogleImagesDownload(google_images_download.googleimagesdownload):
         Images HTML layout. The new layout uses different HTML structure
         without the 'rg_meta notranslate' class.
         """
+        # First, try to find Google's own thumbnail URLs (often more reliable)
+        thumbnail_url = self._extract_google_thumbnail_urls(s)
+        if thumbnail_url:
+            # Decode HTML entities
+            import html
+            thumbnail_url = html.unescape(thumbnail_url)
+            
+            print(f"✅ Using Google thumbnail URL: {thumbnail_url}")
+            
+            # Extract format
+            image_format = 'jpg'
+            if '.' in thumbnail_url:
+                ext = thumbnail_url.split('.')[-1].lower().split('?')[0]
+                if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg']:
+                    image_format = ext
+            
+            final_object = {
+                'ou': thumbnail_url,
+                'ity': image_format,
+                'oh': 0,
+                'ow': 0,
+                'pt': '',
+                'rh': '',
+                'ru': thumbnail_url,
+                'tu': thumbnail_url
+            }
+            
+            # Find a reasonable end position
+            end_pos = s.find('encrypted-tbn') + 200  # Safe offset
+            return final_object, end_pos
+        
         # Try to find image links in the new HTML format
         # Looking for image URLs in href attributes that contain image data
 
@@ -25,31 +56,93 @@ class CustomGoogleImagesDownload(google_images_download.googleimagesdownload):
 
         if not matches:
             # If no URL links found, try to find direct image sources
-            # Look for img src attributes
+            print("🔍 No redirect URLs found, searching for direct "
+                  "image URLs...")
+            
+            # Look for direct image URLs first
+            direct_img_patterns = [
+                # High-res image URLs
+                (r'src="(https?://[^"]*\.'
+                 r'(?:jpg|jpeg|png|gif|bmp|webp|svg)[^"]*)"'),
+                # Data attributes with images
+                (r'data-[^=]*="(https?://[^"]*\.'
+                 r'(?:jpg|jpeg|png|gif|bmp|webp|svg)[^"]*)"'),
+                # Any direct image URLs in quotes
+                (r'"(https?://[^"]*\.(?:jpg|jpeg|png|gif|bmp|webp|svg)'
+                 r'(?:\?[^"]*)?)"'),
+            ]
+            
+            for pattern in direct_img_patterns:
+                direct_matches = re.findall(pattern, s, re.IGNORECASE)
+                if direct_matches:
+                    for img_url in direct_matches:
+                        # Skip Google's own images and thumbnails
+                        skip_patterns = ['googlelogo', 'google.com', 'gstatic',
+                                         'thumb', 'small', 'icon']
+                        if any(skip in img_url.lower()
+                               for skip in skip_patterns):
+                            continue
+                        
+                        print(f"🎯 Found direct image URL: {img_url}")
+                        
+                        # Extract format
+                        image_format = 'jpg'
+                        if '.' in img_url:
+                            ext = img_url.split('.')[-1].lower().split('?')[0]
+                            valid_exts = ['jpg', 'jpeg', 'png', 'gif', 'bmp',
+                                          'webp', 'svg']
+                            if ext in valid_exts:
+                                image_format = ext
+
+                        mock_object = {
+                            'ou': img_url,  # image_link
+                            'ity': image_format,     # image_format
+                            'oh': 0,          # image_height
+                            'ow': 0,          # image_width
+                            'pt': '',         # image_description
+                            'rh': '',         # image_host
+                            'ru': img_url,  # image_source
+                            'tu': img_url   # image_thumbnail_url
+                        }
+
+                        end_pos = s.find(img_url) + len(img_url)
+                        return mock_object, end_pos
+            
+            # Fallback to generic img src search
+            print("🔍 Searching for any img src attributes...")
             img_pattern = r'<img[^>]+src="([^"]+)"[^>]*>'
             img_matches = re.findall(img_pattern, s)
 
             if not img_matches:
+                print("❌ No image sources found at all")
                 return "no_links", 0
 
-            # Use the first image found
-            image_url = img_matches[0]
+            # Use the first non-Google image found
+            for image_url in img_matches:
+                google_patterns = ['googlelogo', 'google.com']
+                is_google_img = any(pattern in image_url
+                                    for pattern in google_patterns)
+                if not is_google_img:
+                    print(f"📷 Using fallback img src: {image_url}")
+                    
+                    # Create a mock object similar to the original format
+                    mock_object = {
+                        'ou': image_url,  # image_link
+                        'ity': 'jpg',     # image_format
+                        'oh': 0,          # image_height
+                        'ow': 0,          # image_width
+                        'pt': '',         # image_description
+                        'rh': '',         # image_host
+                        'ru': image_url,  # image_source
+                        'tu': image_url   # image_thumbnail_url
+                    }
 
-            # Create a mock object similar to the original format
-            mock_object = {
-                'ou': image_url,  # image_link
-                'ity': 'jpg',     # image_format
-                'oh': 0,          # image_height
-                'ow': 0,          # image_width
-                'pt': '',         # image_description
-                'rh': '',         # image_host
-                'ru': image_url,  # image_source
-                'tu': image_url   # image_thumbnail_url
-            }
-
-            # Find the end position for this match
-            end_pos = s.find('>', s.find(img_matches[0])) + 1
-            return mock_object, end_pos
+                    # Find the end position for this match
+                    end_pos = s.find('>', s.find(image_url)) + 1
+                    return mock_object, end_pos
+            
+            print("❌ No valid image URLs found")
+            return "no_links", 0
 
         # Extract the actual image URL from the Google redirect URL
         first_match = matches[0]
@@ -64,13 +157,33 @@ class CustomGoogleImagesDownload(google_images_download.googleimagesdownload):
 
         if 'url' in url_parts:
             actual_url = url_parts['url'][0]
+            
+            # Print the extracted URL for debugging
+            print(f"🔍 Extracted URL: {actual_url}")
+            
+            # Check if this is a direct image URL or a page URL
+            image_extensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp',
+                                'webp', 'svg']
+            is_direct_image = any(actual_url.lower().endswith(f'.{ext}')
+                                  for ext in image_extensions)
+
+            if not is_direct_image:
+                print("⚠️  WARNING: URL appears to be a webpage, "
+                      "not direct image:")
+                print(f"    {actual_url}")
+                # Try to find actual image URLs in the remaining HTML
+                return self._find_direct_image_urls(s, first_match)
 
             # Extract image format from URL
             image_format = 'jpg'  # default
             if '.' in actual_url:
-                ext = actual_url.split('.')[-1].lower()
-                if ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']:
+                # Remove query params
+                ext = actual_url.split('.')[-1].lower().split('?')[0]
+                if ext in image_extensions:
                     image_format = ext
+
+            print(f"✅ Valid image URL found: {actual_url}")
+            print(f"   Format: {image_format}")
 
             # Create object in the expected format
             final_object = {
@@ -184,3 +297,103 @@ class CustomGoogleImagesDownload(google_images_download.googleimagesdownload):
                 return mock_object, end_pos
 
         return "no_links", 0
+
+    def _find_direct_image_urls(self, s, skip_until):
+        """
+        Helper method to find direct image URLs when the main method
+        finds webpage URLs instead of direct image URLs.
+        """
+        # Skip past the already processed content
+        remaining_html = s[s.find(skip_until) + len(skip_until):]
+        
+        # Look for direct image URLs in various patterns
+        patterns = [
+            # Direct image URLs in data attributes
+            (r'data-src="(https?://[^"]*\.'
+             r'(?:jpg|jpeg|png|gif|bmp|webp|svg)[^"]*)"'),
+            # Image URLs in src attributes
+            r'src="(https?://[^"]*\.(?:jpg|jpeg|png|gif|bmp|webp|svg)[^"]*)"',
+            # URLs ending with image extensions
+            (r'"(https?://[^"]*\.(?:jpg|jpeg|png|gif|bmp|webp|svg)'
+             r'(?:\?[^"]*)?)"'),
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, remaining_html, re.IGNORECASE)
+            if matches:
+                for url in matches:
+                    # Skip thumbnails and tiny images
+                    skip_words = ['thumb', 'small', 'icon']
+                    if any(skip in url.lower() for skip in skip_words):
+                        continue
+
+                    print(f"🎯 Found direct image URL: {url}")
+
+                    # Extract format
+                    image_format = 'jpg'
+                    if '.' in url:
+                        ext = url.split('.')[-1].lower().split('?')[0]
+                        valid_exts = ['jpg', 'jpeg', 'png', 'gif', 'bmp',
+                                      'webp', 'svg']
+                        if ext in valid_exts:
+                            image_format = ext
+                    
+                    final_object = {
+                        'ou': url,
+                        'ity': image_format,
+                        'oh': 0,
+                        'ow': 0,
+                        'pt': '',
+                        'rh': '',
+                        'ru': url,
+                        'tu': url
+                    }
+                    
+                    end_pos = s.find(skip_until) + len(skip_until) + 100
+                    return final_object, end_pos
+        
+        print("❌ No direct image URLs found")
+        return "no_links", 0
+
+    def _extract_google_thumbnail_urls(self, s):
+        """
+        Extract Google's own thumbnail URLs which are often direct image URLs.
+        These are typically more reliable than the linked webpage URLs.
+        """
+        # Google often stores thumbnail URLs in various data attributes
+        thumbnail_patterns = [
+            # Common Google thumbnail patterns
+            r'data-src="(https://encrypted-tbn\d\.gstatic\.com/[^"]*)"',
+            r'src="(https://encrypted-tbn\d\.gstatic\.com/[^"]*)"',
+            # Google Lens and other direct image URLs
+            r'"(https://[^"]*\.googleusercontent\.com/[^"]*)"',
+            # Direct images from google servers
+            r'"(https://lh\d+\.googleusercontent\.com/[^"]*)"',
+            # Images from google storage
+            (r'"(https://storage\.googleapis\.com/[^"]*\.'
+             r'(jpg|jpeg|png|gif|webp))"'),
+        ]
+        
+        for pattern in thumbnail_patterns:
+            matches = re.findall(pattern, s, re.IGNORECASE)
+            if matches:
+                for match in matches:
+                    # Handle tuple results from patterns with groups
+                    url = match[0] if isinstance(match, tuple) else match
+                    
+                    # Skip very small thumbnails
+                    small_sizes = ['=s24', '=s48', '=w24', '=h24']
+                    if any(size in url for size in small_sizes):
+                        continue
+                    
+                    print(f"🖼️  Found Google thumbnail: {url}")
+                    
+                    # Try to get a larger version by modifying URL parameters
+                    if '=s' in url:
+                        # Replace small size with larger size
+                        url = re.sub(r'=s\d+', '=s400', url)
+                        print(f"🔍 Enhanced to larger size: {url}")
+                    
+                    return url
+        
+        return None
