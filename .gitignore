@@ -1,1 +1,6 @@
 venv
+chromedriver-mac-arm64
+
+# downloaded models
+*.task
+models
