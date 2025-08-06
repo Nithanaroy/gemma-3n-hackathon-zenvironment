@@ -31,7 +31,7 @@ messages = [
     {
         "role": "user",
         "content": [
-            # {"type": "image", "image": image_data},
+            {"type": "image", "image": image_data},
             {"type": "text", "text": analysis_prompt}
         ]
     }
